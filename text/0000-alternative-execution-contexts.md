@@ -6,21 +6,31 @@
 # Summary
 [summary]: #summary
 
-This is an *experimental RFC* for adding the ability to integrate custom
-test/bench/etc frameworks in Rust.
+This is an *experimental RFC* for adding support for alternative
+execution contexts to Rust. The primary goal of these is to enable easy,
+flexible, and seamless integration of custom test/bench/etc. frameworks.
 
 # Motivation
 [motivation]: #motivation
 
-Currently, Rust lets you write unit tests with a `#[test]` attribute. We
-also have an unstable `#[bench]` attribute which lets one write
-benchmarks.
+Currently, Rust has a small number of supported execution contexts. The
+default one (i.e., the one you get with `cargo run`) is to run the
+`main()` function defined in a file designated as a binary by the user
+under the `[[bin]]` section of their `Cargo.toml`. `test` and `bench`
+are two other execution contexts that generate their own `main()`
+functions that calls all functions annotated with `#[test]` and
+`#[bench]` in the crate's source respectively.
 
-In general it's not easy to use your own testing strategy. Implementing
-something that can work within a `#[test]` attribute is fine
-(`quickcheck` does this with a macro), but changing the overall strategy
-is hard. For example, `quickcheck` would work even better if it could be
-done as:
+However, it would be good if users could also write crates that define
+*new* execution contexts (e.g., `cargo fuzz`), or edit existing ones
+(e.g. `cargo test` running quickcheck). This is difficult to do today,
+especially in a way that integrates nicely with existing tooling (cargo
+in particular).
+
+Implementing something that can work within a `#[test]` attribute is
+fine (`quickcheck` does this with a macro), but changing the overall
+strategy is hard. For example, `quickcheck` would work even better if it
+could be done as:
 
 ```rust
 #[quickcheck]
@@ -42,23 +52,9 @@ cases by manually running `rustc`, but it has the same problem as
 cargo-fuzz where getting these flags right is hard. This too could be
 implemented as a custom test framework.
 
-A profiling framework may want to use this mode to instrument the binary
-in a certain way. We can already do this via proc macros, but having it
-hook through `cargo test` would be neat.
-
-Overall, it would be good to have a generic framework for post-build
-steps that can support use cases like `#[test]` (both the built-in one
-and quickcheck), `#[bench]` (both built in and custom ones like
-[criterion]), `examples`, and things like fuzzing. While we may not
-necessarily rewrite the built in test/bench/example infra in terms of
-the new framework, it should be possible to do so.
-
-The main two problems that we need to solve are:
-
- - Having a nice API for generating test binaries
- - Having good `cargo` integration so that custom tests are at the same
-   level of integration as regular tests as far as build processes are
-   concerned
+A profiling framework (like [criterion]) may want to use this mode to
+instrument the binary in a certain way. We can already do this via proc
+macros, but having it hook through `cargo test` would be neat.
 
  [cargo-fuzz]: https://github.com/rust-fuzz/cargo-fuzz
  [criterion]: https://github.com/japaric/criterion.rs
@@ -70,74 +66,83 @@ The main two problems that we need to solve are:
 (As an eRFC I'm excluding the "how to teach this" for now; when we have
 more concrete ideas we can figure out how to frame it.)
 
-## Test framework proc macro
+This eRFC proposes adding a notion of *alternative execution contexts*
+that can support use cases like `#[test]` (both the built-in one and
+quickcheck), `#[bench]` (both built in and custom ones like
+[criterion]), `examples`, and things like fuzzing. While we may not
+necessarily rewrite the built in test/bench/example infra in terms of
+the new framework, it should be possible to do so.
 
-A test framework is essentially a whole-crate proc macro. Test
-frameworks would basically look like this:
+The main two features proposed are:
+
+ - An API for defining a new execution context, including introspection
+   into the crate that is using the execution context.
+ - A mechanism for `cargo` integration so that custom execution contexts
+   are at the same level of integration as `test` or `bench` as far as
+   build processes are concerned.
+
+## Procedural macro for a new execution context
+
+A custom execution context is essentially a whole-crate procedural
+macro that is evaluated after all other macros in the target crate have
+been evaluated. It is passed the `TokenStream` for every element in the
+target crate that has a set of attributes the execution context has
+registered interest in. Essentially:
 
 ```rust
 extern crate proc_macro;
-
 use proc_macro::TokenStream;
 
-#[custom_test_framework(attrs(my_test, should_panic))]
-pub fn my_bench(input: TokenStream) -> TokenStream {
-    // collect all `#[my_test]` functions and generate a `main()` that
-    // calls it, replacing the existing `main()` if it exists
+#[execution_context(with_attrs(test))]
+pub fn like_todays_test(elements: &mut [TokenStream]) -> TokenStream {
+    // ...
 }
 ```
 
-I'm not certain if the test framework itself needs to have a name; it
-just needs to register attributes it cares about. However the above
-could also have been written as `#[custom_test_framework(my_test,
-attrs(should_panic))]`
+`elements` here contains the `TokenStream` for every element in the
+target crate that has one of the attributes declared in `with_attrs`.
+These may be modules, functions, structs, statics, or whatever else the
+execution context wants to support. It is allowed to mutate each
+`TokenStream` however it wishes. For example, `libtest` would surround
+each annotated function with another function that records whether the
+test panicked, and returns the test's result. The returned `TokenStream`
+will become the `main()` when this execution context is used.
 
-Because the proc macro is only loaded whilst testing if you use custom
-attributes your tests should probably be kept behind `#[cfg(test)]` so
-that you don't get unknown attribute warnings whilst loading. (We could
-change this by asking attributes to be registered in Cargo.toml, but I
-don't find this necessary)
+Because this procedural macro is only loaded when it is used as the
+execution context, the `#[test]` annotation should probably be kept
+behind `#[cfg(test)]` so that you don't get unknown attribute warnings
+whilst loading. (We could change this by asking attributes to be
+registered in Cargo.toml, but I don't find this necessary)
 
-## Helper crate
+### Open question
 
-The proc macro is pretty bare-bones as is. It doesn't help with any
-common tasks wrt testing, for example users would still have to do work
-like collecting all the test functions or removing `main()`.
+One of the major questions here is how the generated `main()` references
+the given elements. For example, consider the following code under the
+above execution context:
 
-For this purpose we provide a helper crate, maintained in the nursery
-(or externally), that essentially provides the functionality of
-`TestHarnessGenerator` and `EntryPointCleaner` in libsyntax, but instead
-works with `syn` or an equivalent AST manipulation library.
-
-We provide the following APIs:
-
-```rust
-fn clean_entry_point(tree: syn::ItemMod) -> syn::ItemMod;
-
-trait TestCollector {
-    fn fold_function(&mut self, path: syn::Path, func: syn::ItemFn) -> syn::ItemFn;
-}
-
-fn collect_tests<T: TestCollector>(collector: &mut T, tree: syn::ItemMod) -> ItemMod;
+```
+#[test]
+fn foo() {}
 ```
 
-The `TestCollector` lets crates both collect all the test functions that
-need calling, as well as also transforming them in any way they wish.
-Strictly speaking transforming the functions can be done in a different
-pass, but it's convenient to do them in the same pass.
+The generated `main()` will at some point need to call `foo`. It can do
+this if it knows the name of the function, but this breaks down with
+more complex code:
 
-It may be worth generalizing this so that you can also collect entire
-modules or something, and providing a simple API for reinserting a main
-function into the code.
+```
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn foo() {}
+}
+```
 
-The in-built `TestHarnessGenerator` does a bunch of reexporting so that
-privacy works. As a first pass, I think it's sufficient for
-`TestCollector` to mark all modules public, but we can build something
-closer to `TestHarnessGenerator` if we wish.
-
-This crate will be out of tree and versioned, so settling on API design
-for this _now_ isn't that pressing an issue.
-
+Here, the generated `main` will need to call `tests::foo()`. How does it
+learn the path to the `foo` function? Perhaps this needs to be passed
+explicitly along with the `TokenStream`s? Furthermore, there is the
+question of visibility: given that `foo` is private to the `tests`
+module, how is the generated `main()` (which is in the same crate, but
+not the same module) allowed to reference it?
 
 ## Cargo integration
 
