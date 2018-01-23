@@ -97,22 +97,32 @@ extern crate proc_macro;
 use proc_macro::TokenStream;
 
 #[execution_context(with_attrs(test))]
-pub fn like_todays_test(elements: &mut [TokenStream]) -> TokenStream {
+pub fn like_todays_test(items: &[AnnotatedItem]) -> TokenStream {
     // ...
 }
 ```
 
-`elements` here contains the `TokenStream` for every element in the
+where
+
+```rust
+struct AnnotatedItem
+    tokens: TokenStream,
+    span: Span,
+    attributes: TokenStream,
+    path: SomeTypeThatRepresentsPathToItem
+}
+```
+
+`items` here contains an `AnnotatedItem` for every element in the
 target crate that has one of the attributes declared in `with_attrs`.
 An execution context could declare that it reacts to multiple different
-attributes, in which case it would get all elements with any of the
-listed attributes. These elements be modules, functions, structs,
-statics, or whatever else the execution context wants to support. It is
-allowed to mutate each `TokenStream` however it wishes. For example,
-`libtest` would surround each annotated function with another function
-that records whether the test panicked, and returns the test's result.
-The returned `TokenStream` will become the `main()` when this execution
-context is used.
+attributes, in which case it would get all items with any of the
+listed attributes. These items be modules, functions, structs,
+statics, or whatever else the execution context wants to support. Note
+that the execution context function can only see all the annotated
+items, not modify them; modification would have to happen with regular
+procedural macros The returned `TokenStream` will become the `main()`
+when this execution context is used.
 
 Because this procedural macro is only loaded when it is used as the
 execution context, the `#[test]` annotation should probably be kept
@@ -120,10 +130,10 @@ behind `#[cfg(test)]` so that you don't get unknown attribute warnings
 whilst loading. (We could change this by asking attributes to be
 registered in Cargo.toml, but I don't find this necessary)
 
-### Open question
+### A note about paths
 
 One of the major questions here is how the generated `main()` references
-the given elements. For example, consider the following code under the
+the given items. For example, consider the following code under the
 above execution context:
 
 ```
@@ -144,11 +154,12 @@ mod tests {
 ```
 
 Here, the generated `main` will need to call `tests::foo()`. How does it
-learn the path to the `foo` function? Perhaps this needs to be passed
-explicitly along with the `TokenStream`s? Furthermore, there is the
-question of visibility: given that `foo` is private to the `tests`
-module, how is the generated `main()` (which is in the same crate, but
-not the same module) allowed to reference it?
+learn the path to the `foo` function? Furthermore, there is the question
+of visibility: given that `foo` is private to the `tests` module, how is
+the generated `main()` (which is in the same crate, but not the same
+module) allowed to reference it? Perhaps the compiler needs to change
+the visibility of ancestors of items annotated with an attribute
+registered by the chosen execution context?
 
 ## Cargo integration
 
