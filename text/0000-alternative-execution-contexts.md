@@ -104,12 +104,15 @@ pub fn like_todays_test(elements: &mut [TokenStream]) -> TokenStream {
 
 `elements` here contains the `TokenStream` for every element in the
 target crate that has one of the attributes declared in `with_attrs`.
-These may be modules, functions, structs, statics, or whatever else the
-execution context wants to support. It is allowed to mutate each
-`TokenStream` however it wishes. For example, `libtest` would surround
-each annotated function with another function that records whether the
-test panicked, and returns the test's result. The returned `TokenStream`
-will become the `main()` when this execution context is used.
+An execution context could declare that it reacts to multiple different
+attributes, in which case it would get all elements with any of the
+listed attributes. These elements be modules, functions, structs,
+statics, or whatever else the execution context wants to support. It is
+allowed to mutate each `TokenStream` however it wishes. For example,
+`libtest` would surround each annotated function with another function
+that records whether the test panicked, and returns the test's result.
+The returned `TokenStream` will become the `main()` when this execution
+context is used.
 
 Because this procedural macro is only loaded when it is used as the
 execution context, the `#[test]` annotation should probably be kept
@@ -170,7 +173,7 @@ their `Cargo.toml`:
 
 ```toml
 [execution.context.fuzz]
-framework = { rust-fuzz = "1.0" }
+provider = { rust-fuzz = "1.0" }
 folders = ["fuzz/"]
 ```
 
@@ -181,19 +184,20 @@ executions are defined:
 
 ```toml
 [execution.context.test]
-framework = { test = "1.0", context = "test" }
+provider = { test = "1.0", context = "test" }
 folders = ["tests/", "src/"]
 
 [execution.context.bench]
-framework = { test = "1.0", context = "bench" }
+provider = { test = "1.0", context = "bench" }
 folders = ["benchmarks/"]
 ```
 
 These can be overridden by a crate's `Cargo.toml`. The `context`
 property is used to disambiguate when a single crate has multiple
-functions tagged `#[execution_context]`. `test` here is `libtest`,
-though note that it could be maintained out-of-tree, and shipped with
-rustup.
+functions tagged `#[execution_context]` (if we were using the example
+execution provider further up, we'd give `like_todays_test` here).
+`test` here is `libtest`, though note that it could be maintained
+out-of-tree, and shipped with rustup.
 
 When building a particular execution context, the `dependencies` of the
 crate providing the execution context is merged with the
@@ -288,8 +292,8 @@ to standardize things like json output and whatnot.
 
 Currently we have `cfg(test)` and `cfg(bench)`. Should `cfg(test)` be
 applied to all? Should `cfg(execution_context_name)` be used instead?
-Ideally we'd have a way when declaring a framework to declare what cfgs
-it should be built with.
+Ideally we'd have a way when declaring an execution context to declare
+what cfgs it should be built with.
 
 ## Other questions
 
