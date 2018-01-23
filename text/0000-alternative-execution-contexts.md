@@ -1,5 +1,5 @@
 - Feature Name: alternative_execution_contexts
-- Start Date: 2018-01-16
+- Start Date: 2018-01-22
 - RFC PR: (leave this empty)
 - Rust Issue: (leave this empty)
 
@@ -60,11 +60,14 @@ macros, but having it hook through `cargo test` would be neat.
  [criterion]: https://github.com/japaric/criterion.rs
  [Compiletest]: http://github.com/laumann/compiletest-rs
 
-# Detailed proposal
-[detailed-proposal]: #detailed-proposal
+# Guide-level explanation
+[guide-level-explanation]: #guide-level-explanation
 
-(As an eRFC I'm excluding the "how to teach this" for now; when we have
-more concrete ideas we can figure out how to frame it.)
+As an eRFC I'm excluding this section for now; when we have more
+concrete ideas we can figure out how to frame it.
+
+# Reference-level explanation
+[reference-level-explanation]: #reference-level-explanation
 
 This eRFC proposes adding a notion of *alternative execution contexts*
 that can support use cases like `#[test]` (both the built-in one and
@@ -220,42 +223,15 @@ contexts = [test, quickcheck, examples]
 `foo`, and if so, execute all of its contexts. If not, it will look for
 a context named `foo`, and if it exists, execute it as outlined above.
 
-## To be designed
+# Drawbacks
+[drawbacks]: #drawbacks
 
-This contains things which we should attempt to solve in the course of
-this experiment, for which this eRFC does not currently provide a
-concrete proposal.
-
-### Integration with doctests
-
-Documentation tests are somewhat special, in that they cannot easily be
-expressed as `TokenStream` manipulations. In the first instance, the
-right thing to do is probably to have an implicitly defined execution
-context called `doctest` which is included in the execution context set
-`test` by default.
-
-### Translating existing cargo test flags
-
-Today, `cargo test` takes a number of flags such as `--lib`, `--test
-foo`, and `--doc`. As breaking these at this point would make users sad,
-cargo should recognize them and map to the appropriate execution
-contexts.
-
-### Standardizing the output
-
-We should probably provide a crate with useful output formatters and
-stuff so that if test harnesses desire, they can use the same output
-formatting as a regular test. This also provides a centralized location
-to standardize things like json output and whatnot.
-
-@killercup is working on a proposal for this which I will try to work in.
-
-### Configuration
-
-Currently we have `cfg(test)` and `cfg(bench)`. Should `cfg(test)` be
-applied to all? Should `cfg(execution_context_name)` be used instead?
-Ideally we'd have a way when declaring a framework to declare what cfgs
-it should be built with.
+ - This adds more sections to `Cargo.toml`.
+ - This complicates the execution path for cargo, in that it now needs
+   to know about execution contexts and sets.
+ - Flags and command-line parameters for test and bench will now vary
+   between execution contexts, which may confuse users as they move
+   between crates.
 
 # Rationale and alternatives
 [alternatives]: #alternatives
@@ -273,6 +249,44 @@ it should be built with.
 
 # Unresolved questions
 [unresolved]: #unresolved-questions
+
+Beyond the big one listed under the reference-level explanation, there
+are other open questions surrounding this RFC. Some of these we should
+attempt to solve in the course of this experiment, and this eRFC does
+not currently provide a concrete proposal.
+
+## Integration with doctests
+
+Documentation tests are somewhat special, in that they cannot easily be
+expressed as `TokenStream` manipulations. In the first instance, the
+right thing to do is probably to have an implicitly defined execution
+context called `doctest` which is included in the execution context set
+`test` by default.
+
+## Translating existing cargo test flags
+
+Today, `cargo test` takes a number of flags such as `--lib`, `--test
+foo`, and `--doc`. As breaking these at this point would make users sad,
+cargo should recognize them and map to the appropriate execution
+contexts.
+
+## Standardizing the output
+
+We should probably provide a crate with useful output formatters and
+stuff so that if test harnesses desire, they can use the same output
+formatting as a regular test. This also provides a centralized location
+to standardize things like json output and whatnot.
+
+@killercup is working on a proposal for this which I will try to work in.
+
+## Configuration
+
+Currently we have `cfg(test)` and `cfg(bench)`. Should `cfg(test)` be
+applied to all? Should `cfg(execution_context_name)` be used instead?
+Ideally we'd have a way when declaring a framework to declare what cfgs
+it should be built with.
+
+## Other questions
 
  - The big one under execution context procedural macros.
  - The general syntax and toml stuff should be approximately settled on
