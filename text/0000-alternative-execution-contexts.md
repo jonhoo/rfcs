@@ -146,118 +146,100 @@ not the same module) allowed to reference it?
 
 ## Cargo integration
 
-This is a pretty important part of this RFC. Essentially, we need these
-to be built correctly, with the correct dependencies all linked in.
+Alternative execution contexts need to integrate with cargo.
+In particular, when crate `a` uses a crate `b` which provides an
+execution context, `a` needs to be able to specify when `b`'s execution
+context should be used. Furthermore, cargo needs to understand that when
+`b`'s execution context is used, `b`'s dependencies must also be linked.
+Note that `b` could potentially provide multiple execution contexts ---
+these are named according to the name of their `#[execution_context]`
+function.
 
-Firstly, it's worth noting that there are two kinds of tests. We can
-place tests in-tree under `src/` in any regular source file. These are
-usually unit tests. We can also place tests under `tests/`. (or
-`benches/` for benchmarking, or `examples/`, etc). You can run a
-specific one of these via `cargo test --test filename`. You can run only
-the unit tests via `cargo test --lib`
+Nothing special is required in `Cargo.toml` for a crate that provides an
+execution context. Any exported function annotated with
+`#[execution_context]` can be used as an execution context in a
+dependent crate. Dependencies of defined execution contexts should be
+listed in `[dependencies]` of the crate that defines the context.
 
-You can also declare custom test targets via `[[test]]` or `[[bench]]`
-or `[[example]]`
-
-Not all test runners will want the ability to run on in-crate unit
-"tests". For example, this may not make sense for `cargo-fuzz`, which
-runs targets indefinitely or for a long time; so running fuzz targets in
-sequence is a bit weird. Similarly, you don't want examples to be
-in-tree; a hypothetical example-running framework would only apply to
-files under `examples/`.
-
-(The ability to exclude the unit test model isn't necessary -- it can be
-worked around -- but it would be nice to have)
-
-In general, test framework proc macros declare themselves in
-`Cargo.toml`:
-
+For crates that wish to *use* a custom execution context, they do so by
+defining a new execution context under a new `execution` section in
+their `Cargo.toml`:
 
 ```toml
-[package]
-name = "my-test-framework"
-[lib]
-test-framework = true
-test-framework-allow-unit = true # if false, disallow running as unit tests on src/ . perhaps should be called allow-lib
-```
-
-
-They can also declare `harness-dependencies`. Our built in test
-harnesses depend on `libtest`, which always exists in your rust install.
-Other test harnesses will probably want to be able to depend on the
-runtime component of the test harness, or depend on other helper crates
-(e.g. colorful terminal output).
-
-When building a test, the `harness-dependencies` of the current custom
-test framework will be merged with `dev-dependencies` of the crate being
-used (overlaps will be semver-merged; if this is not possible it will
-fail to compile) and the combined set will be used together as
-dev-dependencies.
-
-```toml
-[harness-dependencies]
-my-test-framework-rt = "1.0"
-```
-
-Crates _using_ a test framework need to declare them in the Cargo.toml:
-
-```toml
-[testing.framework.test]
-framework = { my-test-framework = "1.0" }
-folder = "tests/"
-
-[testing.framework.fuzz]
+[execution.context.fuzz]
 framework = { rust-fuzz = "1.0" }
-folder = "fuzzers/"
+folders = ["fuzz/"]
 ```
 
-These can be invoked via `cargo test --kind test` and `cargo test --kind
-fuzz`. `testing.test`.
-
-
-Custom test targets can be declared via `[[testing.target]]`
+This defines an execution context named `fuzz`, which uses the
+implementation provided by the `rust-fuzz` crate. When run, it will be
+applies to all files in the `fuzz` directory. By default, the following
+executions are defined:
 
 ```toml
-[[testing.target]]
-framework = fuzz
-path = "foo.rs"
-name = "foo"
+[execution.context.test]
+framework = { test = "1.0", context = "test" }
+folders = ["tests/", "src/"]
+
+[execution.context.bench]
+framework = { test = "1.0", context = "bench" }
+folders = ["benchmarks/"]
 ```
 
-`[[test]]` is an alias for `[[testing.target]] framework = test` (same
-goes for `[[bench]]` and `[[example]]`)
+These can be overridden by a crate's `Cargo.toml`. The `context`
+property is used to disambiguate when a single crate has multiple
+functions tagged `#[execution_context]`. `test` here is `libtest`,
+though note that it could be maintained out-of-tree, and shipped with
+rustup.
 
-By default, the crate has an implicit "test", "bench", and "example"
-framework that use the default libtest stuff. (example is a no-op
-framework that just runs stuff). However, declaring a framework with the
-name `test` will replace the existing `test` framework. In case you wish
-to supplement the framework, use a different name.
+When building a particular execution context, the `dependencies` of the
+crate providing the execution context is merged with the
+`dev-dependencies` of the target crate (overlaps will be semver-merged;
+if this is not possible it will fail to compile) and the combined set
+will be used together as dev-dependencies.
 
-By default, `cargo test` will run doctests and the `test` and `examples`
-framework. This can be customized:
+To invoke a particular execution context, a user invokes `cargo execute
+<context>`. `cargo test` and `cargo bench` are aliases for `cargo
+execute test` and `cargo execute bench` respectively. Any additional
+arguments are passed to the execution context binary. By convention, the
+first position argument should allow filtering which
+test/benchmarks/etc. are run.
+
+## Execution context sets
+
+For many crates, it would be attractive to have `cargo test` run
+multiple different testing-oriented execution contexts at once. This can
+be achieved by defining an execution context *set*:
 
 ```toml
-[[testing.kinds]]
-tests = [test, quickcheck, examples]
-bench = [bench, criterion]
+[execution.set.test]
+contexts = [test, quickcheck, examples]
 ```
 
-This means that `cargo test` will, aside from doctests, run `cargo test
---kind test`, `cargo test --kind quickcheck`, and `cargo test --kind
-examples` (and similar stuff for `cargo bench`).
-
-The generated test binary should be able to take one identifier
-argument, used for narrowing down what tests to run. I.e. `cargo test
---kind quickcheck my_test_fn` will build the test(s) and call them with
-`./testbinary my_test_fn`. Typically, this argument is used to filter
-tests further; test harnesses should try to use it for the same purpose.
-
+`cargo execute foo` will first see if a set is defined with the name
+`foo`, and if so, execute all of its contexts. If not, it will look for
+a context named `foo`, and if it exists, execute it as outlined above.
 
 ## To be designed
 
 This contains things which we should attempt to solve in the course of
 this experiment, for which this eRFC does not currently provide a
 concrete proposal.
+
+### Integration with doctests
+
+Documentation tests are somewhat special, in that they cannot easily be
+expressed as `TokenStream` manipulations. In the first instance, the
+right thing to do is probably to have an implicitly defined execution
+context called `doctest` which is included in the execution context set
+`test` by default.
+
+### Translating existing cargo test flags
+
+Today, `cargo test` takes a number of flags such as `--lib`, `--test
+foo`, and `--doc`. As breaking these at this point would make users sad,
+cargo should recognize them and map to the appropriate execution
+contexts.
 
 ### Standardizing the output
 
@@ -271,33 +253,30 @@ to standardize things like json output and whatnot.
 ### Configuration
 
 Currently we have `cfg(test)` and `cfg(bench)`. Should `cfg(test)` be
-applied to all? Should `cfg(nameofharness)` be used instead? Ideally
-we'd have a way when declaring a framework to declare what cfgs it
-should be built with.
-
+applied to all? Should `cfg(execution_context_name)` be used instead?
+Ideally we'd have a way when declaring a framework to declare what cfgs
+it should be built with.
 
 # Rationale and alternatives
 [alternatives]: #alternatives
 
- - We should either do this or stabilize the existing bencher, not doing
-   both would mean that things that
- - A procedural macro based solution might be too general, instead
-   exposing a more restricted "collect all functions and generate a main
-   function" API might be best. However, this will likely use procedural
-   macros under the hood anyway, so it's not more effort to implement
-   this as a procedural macro with the "collect test functions" stuff
-   coming from helper APIs maintained out of tree.
+ - Stabilize `#[bench]` and extend libtest with setup/teardown and other
+   requested features. This would complicate the in-tree libtest,
+   introduce a barrier for community contributions, and discourage other
+   forms of testing or benchmarking.
+ - A procedural macro based solution might be too general. We could
+   instead expose a more restricted "collect all functions and generate
+   a main function" API might be best. However, this will likely use
+   procedural macros under the hood anyway, so it's not more effort to
+   implement this as a procedural macro with the "collect test
+   functions" stuff coming from helper APIs maintained out of tree.
 
 # Unresolved questions
 [unresolved]: #unresolved-questions
 
- - The TBD section should be resolved through implementation and
-   experimentation
+ - The big one under execution context procedural macros.
  - The general syntax and toml stuff should be approximately settled on
    before this eRFC merges, but iterated on later
- - The details of the helper library should be resolved through
-   implementation and experimentation
- - Should we be shipping a built in bencher at all? Could we instead
-   default `cargo bench` to a `rust-lang-nursery` crate?
- - Does this run before or after regular macro expansion? (Probably
-   after)
+ - Should we be shipping a bencher by default at all (i.e., in libtest)?
+   Could we instead default `cargo bench` to a `rust-lang-nursery`
+   crate?
