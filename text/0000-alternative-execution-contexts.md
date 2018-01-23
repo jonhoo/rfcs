@@ -300,6 +300,9 @@ what cfgs it should be built with.
  - The big one under execution context procedural macros.
  - The general syntax and toml stuff should be approximately settled on
    before this eRFC merges, but iterated on later
+ - Should an execution context be able to declare "defaults" for what
+   folders and execution sets it should be added to? This might save
+   users from some boilerplate in a large number of situations.
  - Should we be shipping a bencher by default at all (i.e., in libtest)?
    Could we instead default `cargo bench` to a `rust-lang-nursery`
    crate?
