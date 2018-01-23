@@ -263,6 +263,11 @@ right thing to do is probably to have an implicitly defined execution
 context called `doctest` which is included in the execution context set
 `test` by default.
 
+Another argument for punting on doctests is that they are intended to
+demonstrate code that the user of a library would write. They're there
+to document *how* something should be used, and it then makes somewhat
+less sense to have different "ways" of running them.
+
 ## Translating existing cargo test flags
 
 Today, `cargo test` takes a number of flags such as `--lib`, `--test
